@@ -1,10 +1,14 @@
-/* PlasmaStrike Frontend app.js (robust + short)
+/* PlasmaStrike Frontend app.js (robust + LOUD when routing is wrong)
+ *
  * Works with your index.html:
  * - List container:  #devicesGrid
  * - Details panel:   #deviceDetails, #detailsTitle, #detailsBody, #btnCloseDetails
- * - Uses .card items (matches your existing DOM)
+ * - Uses .card items (matches your DOM)
  *
- * IMPORTANT: Handles BOTH response shapes:
+ * Key behavior:
+ * - Calls /api/devices (via your domain)
+ * - If response is NOT JSON (e.g. HTML page), shows API: ERROR clearly
+ * - Handles BOTH valid response shapes:
  *   A) [ ...devices ]
  *   B) { ok:true, count:N, devices:[ ...devices ] }
  */
@@ -28,22 +32,9 @@
     btnRefreshNow: $("#btnRefreshNow"),
   };
 
+  // ---------- tiny helpers ----------
   function setBadge(text) {
     if (el.backendBadge) el.backendBadge.textContent = text;
-  }
-
-  function showDetails() {
-    if (!el.deviceDetails) return;
-    el.deviceDetails.classList.remove("hidden");
-    el.deviceDetails.style.display = "block";
-  }
-
-  function hideDetails() {
-    if (!el.deviceDetails) return;
-    el.deviceDetails.classList.add("hidden");
-    el.deviceDetails.style.display = "none";
-    if (el.detailsTitle) el.detailsTitle.textContent = "Device";
-    if (el.detailsBody) el.detailsBody.textContent = "Click a device…";
   }
 
   function esc(s) {
@@ -61,22 +52,56 @@
     return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
   }
 
+  function showDetails() {
+    if (!el.deviceDetails) return;
+    el.deviceDetails.classList.remove("hidden");
+    el.deviceDetails.style.display = "block";
+  }
+
+  function hideDetails() {
+    if (!el.deviceDetails) return;
+    el.deviceDetails.classList.add("hidden");
+    el.deviceDetails.style.display = "none";
+    if (el.detailsTitle) el.detailsTitle.textContent = "Device";
+    if (el.detailsBody) el.detailsBody.textContent = "Click a device…";
+  }
+
+  // ---------- API: MUST be JSON ----------
   async function apiGetJson(path) {
-    const res = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
+    const res = await fetch(path, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
     const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch { data = text; }
+
+    // If worker/proxy is wrong, you'll often get HTML here with 200 OK.
+    if (!ct.includes("application/json")) {
+      // Show the first bit of the response to help diagnose
+      const preview = text.slice(0, 120).replace(/\s+/g, " ");
+      throw new Error(
+        `Expected JSON from ${path}, got "${ct || "no content-type"}". ` +
+        `This usually means Cloudflare Worker is NOT proxying ${path}. ` +
+        `Preview: ${preview}`
+      );
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Invalid JSON from ${path} (proxy may be returning HTML).`);
+    }
+
     if (!res.ok) {
-      const msg = typeof data === "string" ? data : (data?.error || `${res.status} ${res.statusText}`);
+      const msg = data?.error || `${res.status} ${res.statusText}`;
       throw new Error(msg);
     }
     return data;
   }
 
   function extractDevices(payload) {
-    // Handles:
-    //  - Array payload: [...]
-    //  - Object payload: { devices: [...] }
     if (Array.isArray(payload)) return payload;
     if (payload && Array.isArray(payload.devices)) return payload.devices;
     return [];
@@ -86,6 +111,7 @@
     return d?.mac || d?.macAddress || d?.deviceMac || d?.id || null;
   }
 
+  // ---------- render ----------
   function renderDevices(devices) {
     if (!el.devicesGrid) return;
 
@@ -122,9 +148,9 @@
 
       const device = await apiGetJson(`/api/devices/${encodeURIComponent(mac)}`);
 
-      // For now: show raw JSON (you said raw is fine)
       if (el.detailsBody) {
-        el.detailsBody.innerHTML = `<pre class="codebox" style="white-space:pre-wrap">${esc(JSON.stringify(device, null, 2))}</pre>`;
+        el.detailsBody.innerHTML =
+          `<pre class="codebox" style="white-space:pre-wrap">${esc(JSON.stringify(device, null, 2))}</pre>`;
       }
     } catch (err) {
       showDetails();
@@ -132,6 +158,7 @@
     }
   }
 
+  // ---------- refresh age ----------
   let lastRefreshAt = Date.now();
   function startRefreshAge() {
     if (!el.refreshAge) return;
@@ -143,6 +170,7 @@
   async function refreshDevices() {
     try {
       setBadge("API: …");
+
       const payload = await apiGetJson("/api/devices");
       const devices = extractDevices(payload);
 
@@ -152,20 +180,17 @@
     } catch (err) {
       setBadge("API: ERROR");
       if (el.devicesGrid) {
-        el.devicesGrid.innerHTML = `<div style="color:#b00020"><b>Failed to load /api/devices</b><br>${esc(String(err.message || err))}</div>`;
+        el.devicesGrid.innerHTML =
+          `<div style="color:#b00020"><b>API ERROR</b><br>${esc(String(err.message || err))}</div>`;
       }
       if (el.deviceCount) el.deviceCount.textContent = "—";
     }
   }
 
   function boot() {
-    // Details closed initially
     hideDetails();
 
-    // Close button
     if (el.btnCloseDetails) el.btnCloseDetails.addEventListener("click", hideDetails);
-
-    // Refresh now
     if (el.btnRefreshNow) el.btnRefreshNow.addEventListener("click", refreshDevices);
 
     startRefreshAge();
