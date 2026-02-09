@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PlasmaStrike</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="title">PlasmaStrike</div>
+        <div class="sub">Frontend (Local) → Fly Backend</div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <div id="backendBadge" class="badge badge-warn">Backend: …</div>
+      <div class="badge">Devices: <span id="deviceCount">…</span></div>
+      <div class="badge">Refresh: <span id="refreshAge">0</span>s</div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="devices">Devices</button>
+    <button class="tab" data-tab="logs">Service Logs</button>
+    <button class="tab" data-tab="calibration">Calibration</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main class="container">
+
+    <!-- DEVICES -->
+    <section id="tab-devices" class="tabpanel active">
+      <div class="panelhead">
+        <h2>Devices</h2>
+        <div class="paneltools">
+          <label class="switchrow">
+            <span>PSI smoothing</span>
+            <input id="psiSmoothingEnabled" type="checkbox" checked />
+          </label>
+          <label class="switchrow">
+            <span>Window</span>
+            <input id="psiSmoothingWindow" type="number" min="1" max="60" value="12" />
+          </label>
+          <button id="btnRefreshNow" class="btn">Refresh now</button>
+        </div>
+      </div>
+
+      <div id="devicesGrid" class="grid"></div>
+      <div id="devicesEmpty" class="empty hidden">No devices found.</div>
+    </section>
+
+    <!-- LOGS -->
+    <section id="tab-logs" class="tabpanel">
+      <div class="panelhead">
+        <h2>Service Logs</h2>
+        <div class="paneltools">
+          <label class="switchrow">
+            <span>Limit</span>
+            <input id="logsLimit" type="number" min="10" max="500" value="100" />
+          </label>
+          <button id="btnLogsRefresh" class="btn">Refresh logs</button>
+        </div>
+      </div>
+
+      <div class="hint">
+        This tab calls a configurable API endpoint. If your backend doesn’t have it yet, you’ll see a clear error.
+      </div>
+
+      <div id="logsBox" class="logs"></div>
+    </section>
+
+    <!-- CALIBRATION -->
+    <section id="tab-calibration" class="tabpanel">
+      <div class="panelhead">
+        <h2>Calibration</h2>
+        <div class="paneltools">
+          <label class="switchrow">
+            <span>Device</span>
+            <select id="calDeviceSelect"></select>
+          </label>
+          <button id="btnCalRefresh" class="btn">Refresh</button>
+        </div>
+      </div>
+
+      <div class="hint">
+        Volts and raw readings belong here (not on dashboards). This page shows whatever raw sensor fields your backend returns.
+      </div>
+
+      <pre id="calBox" class="codebox">Select a device…</pre>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="tabpanel">
+      <div class="panelhead">
+        <h2>Settings</h2>
+      </div>
+
+      <div class="settings">
+        <div class="row">
+          <label>Backend Base URL</label>
+          <input id="backendUrlInput" type="text" />
+          <button id="btnSaveBackendUrl" class="btn">Save</button>
+        </div>
+
+        <div class="row">
+          <label>Auto refresh (seconds)</label>
+          <input id="refreshSeconds" type="number" min="2" max="60" value="5" />
+        </div>
+
+        <div class="row">
+          <label>Notes</label>
+          <div class="hint">
+            This app stores only UI settings in localStorage (backend URL, refresh rate, smoothing). No hidden device state is kept.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

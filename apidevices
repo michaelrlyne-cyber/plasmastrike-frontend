@@ -1,0 +1,21 @@
+app.get("/api/devices", (req, res) => {
+  const map = global.__PS_DEVICES__ || new Map();
+  const list = Array.from(map.values()).map(d => ({
+    macAddress: d.macAddress,
+    name: d.name,
+    customerName: d.customerName || "",
+    lastSeen: d.lastSeen,
+    isOnline: d.isOnline,
+    machineMode: d.last?.machineMode,
+    pumpMode: d.last?.pumpMode,
+    sensors: d.last?.sensors,
+    floatTop: d.last?.floatTop,
+    floatBottom: d.last?.floatBottom,
+    faultActive: d.last?.faultActive,
+    faultMessage: d.last?.faultMessage,
+    reportedMachineOn: d.last?.reportedMachineOn,
+    machineRelayInverted: d.last?.machineRelayInverted,
+  }));
+
+  res.json({ ok: true, count: list.length, devices: list });
+});
