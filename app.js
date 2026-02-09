@@ -1,16 +1,14 @@
 /* plasmastrike-frontend/app.js
  *
- * MATCHES YOUR index.html + style.css:
- * - Device cards are .card inside #devicesGrid
- * - Click .card -> GET /api/devices/:mac
- * - Shows details in #deviceDetails (fills #detailsTitle + #detailsBody)
- * - Close button works
- * - Tabs work
- * - Updates backend badge + device count + refresh age
+ * BULLETPROOF CLICK ROUTING
+ * Some global script/CSS is preventing document-level click handlers.
+ * This version listens at WINDOW capture and routes clicks manually.
  *
- * Also:
- * - Handles BOTH sensor formats returned by backend
- * - Shows sensor cards (classic look) + Raw JSON
+ * Matches your index.html structure:
+ * - cards are <div class="card"> inside #devicesGrid
+ * - details panel: #deviceDetails, #detailsTitle, #detailsBody, #btnCloseDetails
+ * - tabs: .tab buttons with data-tab
+ * - panels: .tabpanel sections with ids tab-devices/tab-logs/tab-calibration/tab-settings
  */
 
 (() => {
@@ -37,7 +35,7 @@
     panels: $$(".tabpanel"),
   };
 
-  // ---------- helpers ----------
+  // -------- helpers --------
   function escapeHtml(str) {
     return String(str ?? "")
       .replaceAll("&", "&amp;")
@@ -48,11 +46,8 @@
   }
 
   function safeJson(obj) {
-    try {
-      return JSON.stringify(obj, null, 2);
-    } catch {
-      return String(obj);
-    }
+    try { return JSON.stringify(obj, null, 2); }
+    catch { return String(obj); }
   }
 
   function fmtTime(value) {
@@ -72,14 +67,9 @@
     return String(v);
   }
 
-  // ---------- API ----------
-  // Default: same-origin /api/* (Cloudflare Worker route)
-  function apiPath(path) {
-    return path;
-  }
-
+  // -------- API (same-origin /api via Cloudflare Worker) --------
   async function apiGet(path) {
-    const res = await fetch(apiPath(path), {
+    const res = await fetch(path, {
       method: "GET",
       headers: { Accept: "application/json" },
       cache: "no-store",
@@ -100,24 +90,17 @@
     return body;
   }
 
-  // ---------- Tabs ----------
+  // -------- Tabs --------
   function setActiveTab(name) {
     el.tabs.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     el.panels.forEach((p) => {
       const on = p.id === `tab-${name}`;
       p.classList.toggle("active", on);
-      // ensure visible even if CSS is funky
       p.style.display = on ? "block" : "none";
     });
   }
 
-  function wireTabs() {
-    el.tabs.forEach((btn) => {
-      btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
-    });
-  }
-
-  // ---------- Details panel ----------
+  // -------- Details panel --------
   function showDetails() {
     if (!el.deviceDetails) return;
     el.deviceDetails.classList.remove("hidden");
@@ -144,7 +127,7 @@
     if (el.detailsBody) el.detailsBody.textContent = `ERROR: ${String(err?.message || err)}`;
   }
 
-  // ---------- Sensors (handles both formats) ----------
+  // -------- Sensors (supports both formats) --------
   function prettifySensorId(id) {
     return String(id || "")
       .replace(/^sensor-/, "")
@@ -155,19 +138,17 @@
   function normalizeSensors(device) {
     const s = device?.sensors;
 
-    // B) array format
     if (Array.isArray(s)) {
       return s.map((x) => ({
         id: x.id,
         label: prettifySensorId(x.id),
         value: x.value,
         voltage: x.voltage,
-        status: (x.status || "normal").toLowerCase(),
         unit: String(x.id || "").includes("temp") ? "°C" : "PSI",
+        isBool: String(x.id || "").includes("float"),
       }));
     }
 
-    // A) object format
     if (s && typeof s === "object") {
       const out = [];
       const map = [
@@ -177,7 +158,6 @@
         { id: "sensor-air",    label: "Air",    v: "airPSI",    vv: "airV",    unit: "PSI" },
         { id: "sensor-temp",   label: "Temp",   v: "tempC",     vv: null,      unit: "°C"  },
       ];
-
       for (const m of map) {
         if (s[m.v] === undefined || s[m.v] === null) continue;
         out.push({
@@ -185,8 +165,8 @@
           label: m.label,
           value: s[m.v],
           voltage: m.vv ? s[m.vv] : undefined,
-          status: "normal",
           unit: m.unit,
+          isBool: false,
         });
       }
       return out;
@@ -198,11 +178,7 @@
   function normalizeFloats(device) {
     const toNum = (x) =>
       x === true ? 1 : x === false ? 0 : typeof x === "number" ? x : null;
-
-    return {
-      top: toNum(device?.floatTop),
-      bottom: toNum(device?.floatBottom),
-    };
+    return { top: toNum(device?.floatTop), bottom: toNum(device?.floatBottom) };
   }
 
   function renderDetailsHtml(mac, device) {
@@ -216,10 +192,35 @@
     let sensors = normalizeSensors(device);
     const floats = normalizeFloats(device);
 
-    if (floats.top !== null) sensors = sensors.concat([{ id: "float-top", label: "Float Top", value: floats.top, isBool: true }]);
-    if (floats.bottom !== null) sensors = sensors.concat([{ id: "float-bottom", label: "Float Bottom", value: floats.bottom, isBool: true }]);
+    if (floats.top !== null) sensors.push({ id: "float-top", label: "Float Top", value: floats.top, isBool: true });
+    if (floats.bottom !== null) sensors.push({ id: "float-bottom", label: "Float Bottom", value: floats.bottom, isBool: true });
 
-    const header = `
+    const cards = sensors.length ? `
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+        ${sensors.map((s) => {
+          const isBool = !!s.isBool;
+          const val = isBool ? (Number(s.value) === 1 ? "CLOSED" : "OPEN") : formatNumber(s.value, 2);
+          const unit = isBool ? "" : (s.unit || "");
+          return `
+            <div style="padding:14px; border-radius:14px; background:rgba(0,0,0,.05);">
+              <div style="font-weight:800; margin-bottom:8px;">${escapeHtml(s.label)}</div>
+              <div style="font-size:44px; font-weight:900; line-height:1;">
+                ${escapeHtml(String(val))}
+                ${unit ? `<span style="font-size:16px; font-weight:800; opacity:.75;"> ${escapeHtml(unit)}</span>` : ""}
+              </div>
+              ${s.voltage !== undefined && !isBool ? `
+                <div style="margin-top:10px; font-size:18px; font-weight:800; opacity:.85;">
+                  ${formatNumber(Number(s.voltage), 4)} V
+                </div>
+              ` : ""}
+              <div style="margin-top:8px; font-size:12px; opacity:.7;">ID: ${escapeHtml(s.id || "")}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    ` : `<div style="opacity:.8; font-size:13px;">No sensors returned.</div>`;
+
+    return `
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
         <div style="width:10px; height:10px; border-radius:99px; background:${isOnline ? "#1bbf6a" : "#999"};"></div>
         <div style="font-size:16px; font-weight:900;">${escapeHtml(mac)}</div>
@@ -242,39 +243,12 @@
           <b>FAULT:</b> ${escapeHtml(faultMessage || "Active")}
         </div>
       ` : ""}
-    `;
 
-    const cards = sensors.length ? `
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
-        ${sensors.map((s) => {
-          const isBool = !!s.isBool || String(s.id || "").includes("float");
-          const val = isBool ? (Number(s.value) === 1 ? "CLOSED" : "OPEN") : formatNumber(s.value, 2);
-          const unit = isBool ? "" : (s.unit || "");
-          return `
-            <div style="padding:14px; border-radius:14px; background:rgba(0,0,0,.05);">
-              <div style="font-weight:800; margin-bottom:8px;">${escapeHtml(s.label)}</div>
-              <div style="font-size:44px; font-weight:900; line-height:1;">
-                ${escapeHtml(String(val))}
-                ${unit ? `<span style="font-size:16px; font-weight:800; opacity:.75;"> ${escapeHtml(unit)}</span>` : ""}
-              </div>
-              ${s.voltage !== undefined && !isBool ? `
-                <div style="margin-top:10px; font-size:18px; font-weight:800; opacity:.85;">
-                  ${formatNumber(Number(s.voltage), 4)} V
-                </div>
-              ` : ""}
-              <div style="margin-top:8px; font-size:12px; opacity:.7;">ID: ${escapeHtml(s.id || "")}</div>
-            </div>
-          `;
-        }).join("")}
-      </div>
-    ` : `<div style="opacity:.8; font-size:13px;">No sensors returned.</div>`;
+      ${cards}
 
-    const raw = `
       <div style="margin-top:16px; font-size:12px; opacity:.7;">Raw JSON:</div>
       <pre style="padding:12px; background:rgba(0,0,0,.06); border-radius:8px; overflow:auto; max-height:35vh;">${escapeHtml(safeJson(device))}</pre>
     `;
-
-    return header + cards + raw;
   }
 
   function setDetailsDevice(mac, device) {
@@ -283,59 +257,39 @@
     if (el.detailsBody) el.detailsBody.innerHTML = renderDetailsHtml(mac, device);
   }
 
-  // ---------- Render devices as .card (THIS is the key fix) ----------
+  // -------- Render device cards as .card (your DOM uses .card) --------
   function macFromDevice(d) {
     return d?.mac || d?.macAddress || d?.id || d?.deviceMac || null;
   }
 
   function renderDevices(devices) {
     if (!el.devicesGrid) return;
-
     el.devicesGrid.innerHTML = "";
 
-    // hide/show empty label reliably
     if (el.devicesEmpty) el.devicesEmpty.style.display = devices.length ? "none" : "block";
+    if (el.deviceCount) el.deviceCount.textContent = String(devices.length);
 
     devices.forEach((d) => {
       const mac = macFromDevice(d) || "UNKNOWN";
       const isOnline = d?.isOnline ?? false;
       const lastSeen = d?.lastSeen ?? null;
 
-      const machineMode = d?.machineMode ?? "—";
-      const pumpMode = d?.pumpMode ?? "—";
-      const faultActive = d?.faultActive ?? false;
-
       const card = document.createElement("div");
-      card.className = "card";          // <-- matches your DOM
-      card.dataset.mac = mac;           // <-- used for click -> details
-      card.style.cursor = "pointer";    // make it obvious
+      card.className = "card";
+      card.dataset.mac = mac;
+      card.style.cursor = "pointer";
 
       card.innerHTML = `
         <div><b>Status:</b> ${isOnline ? "🟢 Online" : "⚪ Offline"}</div>
         <div><b>MAC:</b> ${escapeHtml(mac)}</div>
         <div><b>Last seen:</b> ${escapeHtml(String(lastSeen || "—"))}</div>
-        <div><b>Machine:</b> ${escapeHtml(String(machineMode))} &nbsp; | &nbsp; <b>Pump:</b> ${escapeHtml(String(pumpMode))}</div>
-        <div><b>Fault:</b> ${faultActive ? "YES" : "NO"}</div>
       `;
-
-      // click -> load details
-      card.addEventListener("click", async () => {
-        setDetailsLoading(mac);
-        try {
-          const device = await apiGet(`/api/devices/${encodeURIComponent(mac)}`);
-          setDetailsDevice(mac, device);
-        } catch (err) {
-          setDetailsError(mac, err);
-        }
-      });
 
       el.devicesGrid.appendChild(card);
     });
-
-    if (el.deviceCount) el.deviceCount.textContent = String(devices.length);
   }
 
-  // ---------- Refresh age ----------
+  // -------- Refresh age / timers --------
   let lastRefreshAt = Date.now();
   let refreshAgeTimer = null;
   let refreshTimer = null;
@@ -343,15 +297,13 @@
   function startRefreshAge() {
     if (!el.refreshAge) return;
     if (refreshAgeTimer) clearInterval(refreshAgeTimer);
-
     refreshAgeTimer = setInterval(() => {
       el.refreshAge.textContent = String(Math.floor((Date.now() - lastRefreshAt) / 1000));
     }, 500);
   }
 
   function setBackendBadge(text) {
-    if (!el.backendBadge) return;
-    el.backendBadge.textContent = text;
+    if (el.backendBadge) el.backendBadge.textContent = text;
   }
 
   async function loadDevices() {
@@ -363,24 +315,19 @@
         : Array.isArray(payload?.devices)
           ? payload.devices
           : [];
-
       setBackendBadge("API: OK");
       renderDevices(devices);
       lastRefreshAt = Date.now();
     } catch (err) {
       console.error(err);
       setBackendBadge("API: ERROR");
-      if (el.devicesGrid) {
-        el.devicesGrid.innerHTML = `<div style="color:#b00020;">Failed to load devices: ${escapeHtml(String(err?.message || err))}</div>`;
-      }
-      if (el.deviceCount) el.deviceCount.textContent = "—";
+      if (el.devicesGrid) el.devicesGrid.innerHTML = `<div style="color:#b00020;">Load failed: ${escapeHtml(String(err?.message || err))}</div>`;
     }
   }
 
   function getRefreshSeconds() {
     const n = Number(el.refreshSeconds?.value);
-    if (Number.isFinite(n) && n >= 2 && n <= 60) return n;
-    return 5;
+    return Number.isFinite(n) && n >= 2 && n <= 60 ? n : 5;
   }
 
   function scheduleAutoRefresh() {
@@ -388,30 +335,58 @@
     refreshTimer = setInterval(loadDevices, getRefreshSeconds() * 1000);
   }
 
-  // ---------- Wire controls ----------
-  function wireControls() {
-    if (el.btnCloseDetails) el.btnCloseDetails.addEventListener("click", hideDetails);
-    if (el.btnRefreshNow) el.btnRefreshNow.addEventListener("click", loadDevices);
+  // ==========================================================
+  //  THE KEY: WINDOW CAPTURE CLICK ROUTER
+  // ==========================================================
+  function windowClickRouter(e) {
+    const t = e.target;
 
-    if (el.refreshSeconds) {
-      // keep auto-refresh updated if user changes it
-      el.refreshSeconds.addEventListener("change", scheduleAutoRefresh);
+    // Close details button
+    if (t && (t.id === "btnCloseDetails" || t.closest?.("#btnCloseDetails"))) {
+      hideDetails();
+      return;
+    }
+
+    // Refresh now button
+    if (t && (t.id === "btnRefreshNow" || t.closest?.("#btnRefreshNow"))) {
+      loadDevices();
+      return;
+    }
+
+    // Tab buttons
+    const tabBtn = t?.closest?.(".tab");
+    if (tabBtn && tabBtn.dataset?.tab) {
+      setActiveTab(tabBtn.dataset.tab);
+      return;
+    }
+
+    // Device cards (.card inside #devicesGrid)
+    const card = t?.closest?.("#devicesGrid .card");
+    if (card && card.dataset?.mac) {
+      const mac = card.dataset.mac;
+      setDetailsLoading(mac);
+      apiGet(`/api/devices/${encodeURIComponent(mac)}`)
+        .then((device) => setDetailsDevice(mac, device))
+        .catch((err) => setDetailsError(mac, err));
+      return;
     }
   }
 
-  // ---------- Boot ----------
+  // -------- Boot --------
   async function boot() {
-    wireTabs();
-    wireControls();
-    startRefreshAge();
-
-    // default tab
+    // Default tab
     setActiveTab("devices");
 
-    // hide details initially
+    // Hide details initially
     hideDetails();
 
-    // initial load + auto refresh
+    // Wire window capture router (above document)
+    window.addEventListener("click", windowClickRouter, true);
+
+    // Also wire change for refresh seconds
+    if (el.refreshSeconds) el.refreshSeconds.addEventListener("change", scheduleAutoRefresh);
+
+    startRefreshAge();
     await loadDevices();
     scheduleAutoRefresh();
   }
