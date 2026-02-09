@@ -12,12 +12,12 @@
       <div class="dot"></div>
       <div>
         <div class="title">PlasmaStrike</div>
-        <div class="sub">Frontend (Local) → Fly Backend</div>
+        <div class="sub">Live Production Dashboard</div>
       </div>
     </div>
 
     <div class="statusbar">
-      <div id="backendBadge" class="badge badge-warn">Backend: …</div>
+      <div id="backendBadge" class="badge badge-warn">API: …</div>
       <div class="badge">Devices: <span id="deviceCount">…</span></div>
       <div class="badge">Refresh: <span id="refreshAge">0</span>s</div>
     </div>
@@ -25,9 +25,9 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="devices">Devices</button>
-    <button class="tab" data-tab="logs">Service Logs</button>
-    <button class="tab" data-tab="calibration">Calibration</button>
-    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab tab-logs" data-tab="logs">Service Logs</button>
+    <button class="tab tab-calibration" data-tab="calibration">Calibration</button>
+    <button class="tab tab-settings" data-tab="settings">Settings</button>
   </nav>
 
   <main class="container">
@@ -50,6 +50,16 @@
       </div>
 
       <div id="devicesGrid" class="grid"></div>
+
+      <!-- Device details (shown when you click a card) -->
+      <div id="deviceDetails" class="details hidden">
+        <div class="details-head">
+          <div><b id="detailsTitle">Device</b></div>
+          <button id="btnCloseDetails" class="btn">Close</button>
+        </div>
+        <pre id="detailsBody" class="codebox">Click a device…</pre>
+      </div>
+
       <div id="devicesEmpty" class="empty hidden">No devices found.</div>
     </section>
 
@@ -67,7 +77,7 @@
       </div>
 
       <div class="hint">
-        This tab calls a configurable API endpoint. If your backend doesn’t have it yet, you’ll see a clear error.
+        This tab calls the backend logs endpoint. If your backend doesn’t have it yet, you’ll see an error.
       </div>
 
       <div id="logsBox" class="logs"></div>
@@ -116,6 +126,10 @@
           <div class="hint">
             This app stores only UI settings in localStorage (backend URL, refresh rate, smoothing). No hidden device state is kept.
           </div>
+        </div>
+
+        <div class="row hint" id="salesHint" style="display:none;">
+          Sales View is enabled. Advanced tabs and settings are hidden.
         </div>
       </div>
     </section>
