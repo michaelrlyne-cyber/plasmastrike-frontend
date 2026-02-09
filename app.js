@@ -1,10 +1,9 @@
-// PlasmaStrike Frontend - SIMPLE, STABLE, SALES-READY
-// Incremental improvements only (no rewrite, no framework)
-// - Fixes "No devices found" bug
-// - Sales-readable device cards + "Last seen: 15s ago"
-// - PSI smoothing (toggle + window)
-// - Volts/raw stays ONLY in Calibration (not on Devices)
-// - Sales View mode: ?view=sales hides advanced tabs + locks backend URL
+// PlasmaStrike Frontend - SIMPLE, STABLE, CLICKABLE DEVICE DETAILS
+// - Device cards clickable -> loads /api/devices/:mac into details panel
+// - Fixes empty state bug
+// - Sales view: ?view=sales hides advanced tabs + locks backend URL
+// - PSI smoothing kept
+// - No volts shown on dashboard cards
 
 const DEFAULT_API = "https://api.plasma-strike.com";
 const PROD_API = "https://api.plasma-strike.com";
@@ -34,12 +33,12 @@ function applySalesView() {
   const saveBtn = $("btnSaveBackendUrl");
   if (saveBtn) saveBtn.disabled = true;
 
-  // Hide advanced tabs (if present)
+  // Hide advanced tabs if present
   document.querySelectorAll(".tab-logs,.tab-calibration,.tab-settings").forEach(el => {
     el.style.display = "none";
   });
 
-  // Optional hint in Settings (if the element exists)
+  // Optional hint in settings
   const salesHint = $("salesHint");
   if (salesHint) salesHint.style.display = "block";
 }
@@ -99,9 +98,9 @@ function getSmoothingWindow() {
 
 // ---------------- DATA ----------------
 let lastRefresh = Date.now();
+let lastDevices = []; // keep last list for click handling without refetching list
 
-// Per-device smoothing buffers: { mac: [psi1, psi2, ...] }
-const psiHistory = new Map();
+const psiHistory = new Map(); // { mac: [values...] }
 
 function updateRefreshAge() {
   const el = $("refreshAge");
@@ -109,18 +108,12 @@ function updateRefreshAge() {
   el.textContent = Math.floor((Date.now() - lastRefresh) / 1000);
 }
 
-// "Last seen: 15s ago" formatter
 function formatLastSeen(lastSeenIsoOrMs) {
   if (!lastSeenIsoOrMs) return "Unknown";
-
-  const t = typeof lastSeenIsoOrMs === "number"
-    ? lastSeenIsoOrMs
-    : Date.parse(lastSeenIsoOrMs);
-
+  const t = typeof lastSeenIsoOrMs === "number" ? lastSeenIsoOrMs : Date.parse(lastSeenIsoOrMs);
   if (!Number.isFinite(t)) return "Unknown";
 
   const diffSec = Math.max(0, Math.floor((Date.now() - t) / 1000));
-
   if (diffSec < 10) return "just now";
   if (diffSec < 60) return `${diffSec}s ago`;
   const diffMin = Math.floor(diffSec / 60);
@@ -131,13 +124,11 @@ function formatLastSeen(lastSeenIsoOrMs) {
   return `${diffDay}d ago`;
 }
 
-// Safe number parse
 function toNumber(x) {
   const n = typeof x === "number" ? x : Number(x);
   return Number.isFinite(n) ? n : null;
 }
 
-// Compute smoothed PSI per device
 function getSmoothedPsi(mac, rawPsi) {
   const enabled = getSmoothingEnabled();
   const win = getSmoothingWindow();
@@ -146,7 +137,6 @@ function getSmoothedPsi(mac, rawPsi) {
   if (n === null) return null;
 
   if (!enabled) {
-    // If smoothing disabled, still reset history to avoid stale averaging
     psiHistory.set(mac, [n]);
     return n;
   }
@@ -160,7 +150,34 @@ function getSmoothedPsi(mac, rawPsi) {
   return avg;
 }
 
-// Toggle empty state correctly (fixes your bug)
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+
+// ---------------- DETAILS PANEL ----------------
+function showDetails(title, text) {
+  const box = $("deviceDetails");
+  const t = $("detailsTitle");
+  const body = $("detailsBody");
+  if (!box || !t || !body) return;
+  t.textContent = title || "Device";
+  body.textContent = text || "";
+  box.classList.remove("hidden");
+}
+
+function hideDetails() {
+  const box = $("deviceDetails");
+  if (!box) return;
+  box.classList.add("hidden");
+}
+
+// ---------------- EMPTY STATE ----------------
 function setDevicesEmptyState({ loading = false, error = null, count = 0 }) {
   const empty = $("devicesEmpty");
   if (!empty) return;
@@ -193,16 +210,15 @@ async function fetchJSON(url) {
   return r.json();
 }
 
-// ---------------- DEVICES ----------------
 function normalizeMac(d) {
-  return d?.mac || d?.macAddress || d?.id || "";
+  return d?.macAddress || d?.mac || d?.id || "";
 }
 
 function friendlyName(d) {
-  // If you later add "friendlyName" or "name" from backend, it will show automatically.
-  return d?.friendlyName || d?.name || "";
+  return d?.name || d?.friendlyName || d?.friendly_name || "";
 }
 
+// ---------------- DEVICES RENDER ----------------
 function renderDevices(devices) {
   const grid = $("devicesGrid");
   if (!grid) return;
@@ -212,16 +228,27 @@ function renderDevices(devices) {
     const name = friendlyName(d);
     const online = !!d.isOnline;
 
-    // PSI: use raw d.psi if present, otherwise null
-    const rawPsi = d.psi ?? d.pressurePsi ?? d.psi1 ?? d.waterPsi;
-    const smoothed = mac ? getSmoothedPsi(mac, rawPsi) : toNumber(rawPsi);
+    // PSI: support both styles: sensors object or top-level psi
+    let rawPsi = null;
 
+    // Newer backend format shown in your screenshot: sensors array or sensors object
+    if (d?.sensors && typeof d.sensors === "object" && !Array.isArray(d.sensors)) {
+      rawPsi = d.sensors.inletPSI ?? d.sensors.roPSI ?? d.psi;
+    } else if (Array.isArray(d?.sensors)) {
+      // sensors array with id/value
+      const inlet = d.sensors.find(x => x.id === "sensor-inlet");
+      rawPsi = inlet?.value ?? d.psi;
+    } else {
+      rawPsi = d.psi ?? d.pressurePsi ?? d.inletPSI ?? null;
+    }
+
+    const smoothed = mac ? getSmoothedPsi(mac, rawPsi) : toNumber(rawPsi);
     const psiText = (smoothed === null) ? "—" : `${Math.round(smoothed)} PSI`;
+
     const lastSeenText = formatLastSeen(d.lastSeen);
 
-    // Sales-readable, no volts here.
     return `
-      <div class="card">
+      <div class="card device-card" data-mac="${escapeHtml(mac)}">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
           <div>
             <div style="font-weight:700;font-size:16px;line-height:1.2;">
@@ -231,7 +258,6 @@ function renderDevices(devices) {
               MAC: ${escapeHtml(mac || "—")}
             </div>
           </div>
-
           <div style="font-weight:700;">
             ${online ? "🟢 Online" : "🔴 Offline"}
           </div>
@@ -244,24 +270,36 @@ function renderDevices(devices) {
         <div style="margin-top:8px;opacity:.8;">
           Last seen: ${escapeHtml(lastSeenText)}
         </div>
+
+        <div style="margin-top:10px;opacity:.7;font-size:12px;">
+          Click for details
+        </div>
       </div>
     `;
   });
 
   grid.innerHTML = cards.join("");
+
+  // Click handlers for details
+  document.querySelectorAll(".device-card").forEach(card => {
+    card.addEventListener("click", async () => {
+      const mac = card.getAttribute("data-mac");
+      if (!mac) return;
+
+      const api = getApi();
+      showDetails(`Device ${mac}`, "Loading…");
+
+      try {
+        const data = await fetchJSON(`${api}/api/devices/${encodeURIComponent(mac)}`);
+        showDetails(`Device ${mac}`, JSON.stringify(data, null, 2));
+      } catch (e) {
+        showDetails(`Device ${mac}`, "Failed to load device details.");
+      }
+    });
+  });
 }
 
-// Tiny HTML escaping for names/MAC (safety)
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[c]));
-}
-
+// ---------------- DEVICES LOAD ----------------
 async function loadDevices() {
   const api = getApi();
   const grid = $("devicesGrid");
@@ -269,7 +307,7 @@ async function loadDevices() {
 
   setDevicesEmptyState({ loading: true });
 
-  // Health check first (keeps badge stable)
+  // Health check
   try {
     await fetchJSON(`${api}/health`);
     setBackendBadge("API: OK", true);
@@ -283,7 +321,11 @@ async function loadDevices() {
 
   try {
     const data = await fetchJSON(`${api}/api/devices`);
+
+    // Supports both formats: {devices:[...]} or {ok:true,count:n,devices:[...]}
     const devices = data.devices || [];
+
+    lastDevices = devices;
 
     if (countEl) countEl.textContent = String(devices.length);
     lastRefresh = Date.now();
@@ -291,13 +333,13 @@ async function loadDevices() {
     if (!devices.length) {
       if (grid) grid.innerHTML = "";
       setDevicesEmptyState({ loading: false, count: 0 });
+      hideDetails();
       return;
     }
 
     renderDevices(devices);
     setDevicesEmptyState({ loading: false, count: devices.length });
 
-    // Keep calibration dropdown in sync
     populateCalibrationSelect(devices);
   } catch (e) {
     if (grid) grid.innerHTML = "";
@@ -332,7 +374,6 @@ function populateCalibrationSelect(devices) {
 
   const current = sel.value;
 
-  // Build options
   const opts = devices.map(d => {
     const mac = normalizeMac(d);
     const name = friendlyName(d);
@@ -340,15 +381,14 @@ function populateCalibrationSelect(devices) {
     return { value: mac, label };
   }).filter(o => o.value);
 
-  // Only rewrite if list changed (reduces UI flicker)
   const existing = Array.from(sel.options).map(o => o.value).join("|");
   const next = opts.map(o => o.value).join("|");
+
   if (existing !== next) {
     sel.innerHTML = `<option value="">Select…</option>` +
       opts.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join("");
   }
 
-  // Restore selection if possible
   if (current && opts.some(o => o.value === current)) {
     sel.value = current;
   }
@@ -365,7 +405,7 @@ async function loadCalibration() {
   }
 
   try {
-    const data = await fetchJSON(`${api}/api/devices/${sel.value}`);
+    const data = await fetchJSON(`${api}/api/devices/${encodeURIComponent(sel.value)}`);
     box.textContent = JSON.stringify(data, null, 2);
   } catch {
     box.textContent = "Calibration load failed";
@@ -401,8 +441,10 @@ function wireUI() {
   $("btnCalRefresh")?.addEventListener("click", loadCalibration);
   $("calDeviceSelect")?.addEventListener("change", loadCalibration);
 
+  $("btnCloseDetails")?.addEventListener("click", hideDetails);
+
   $("btnSaveBackendUrl")?.addEventListener("click", () => {
-    if (isSalesView()) return; // sales safety
+    if (isSalesView()) return;
     const v = $("backendUrlInput")?.value?.trim();
     if (!v) return;
     setApi(v);
@@ -414,7 +456,6 @@ function wireUI() {
     localStorage.setItem("refreshSeconds", e.target.value);
   });
 
-  // When smoothing settings change, rerender (using last known data next refresh)
   $("psiSmoothingEnabled")?.addEventListener("change", () => loadDevices());
   $("psiSmoothingWindow")?.addEventListener("change", () => loadDevices());
 
