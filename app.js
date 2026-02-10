@@ -11,6 +11,10 @@
  * - Handles BOTH valid response shapes:
  *   A) [ ...devices ]
  *   B) { ok:true, count:N, devices:[ ...devices ] }
+ *
+ * IMPORTANT CHANGE:
+ * - Device details fetch uses: /api/devices?mac=...
+ *   (NOT /api/devices/:mac which your backend does not implement)
  */
 
 (() => {
@@ -78,11 +82,9 @@
 
     // If worker/proxy is wrong, you'll often get HTML here with 200 OK.
     if (!ct.includes("application/json")) {
-      // Show the first bit of the response to help diagnose
       const preview = text.slice(0, 120).replace(/\s+/g, " ");
       throw new Error(
         `Expected JSON from ${path}, got "${ct || "no content-type"}". ` +
-        `This usually means Cloudflare Worker is NOT proxying ${path}. ` +
         `Preview: ${preview}`
       );
     }
@@ -91,7 +93,7 @@
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Invalid JSON from ${path} (proxy may be returning HTML).`);
+      throw new Error(`Invalid JSON from ${path}.`);
     }
 
     if (!res.ok) {
@@ -124,6 +126,10 @@
       const online = d?.isOnline ?? d?.online ?? false;
       const lastSeen = d?.lastSeen ?? d?.updatedAt ?? d?.last_seen ?? null;
 
+      const machineMode = d?.machineMode ?? d?.machine_mode ?? "—";
+      const pumpMode = d?.pumpMode ?? d?.pump_mode ?? "—";
+      const faultActive = d?.faultActive ?? d?.fault_active ?? false;
+
       const card = document.createElement("div");
       card.className = "card";
       card.dataset.mac = mac;
@@ -133,6 +139,8 @@
         <div><b>Status:</b> ${online ? "🟢 Online" : "⚪ Offline"}</div>
         <div><b>MAC:</b> ${esc(mac)}</div>
         <div><b>Last seen:</b> ${esc(fmtTime(lastSeen))}</div>
+        <div><b>Machine:</b> ${esc(machineMode)} &nbsp; | &nbsp; <b>Pump:</b> ${esc(pumpMode)}</div>
+        <div><b>Fault:</b> ${faultActive ? "YES" : "NO"}</div>
       `;
 
       card.addEventListener("click", () => openDevice(mac));
@@ -146,7 +154,8 @@
       if (el.detailsTitle) el.detailsTitle.textContent = mac;
       if (el.detailsBody) el.detailsBody.textContent = `Loading ${mac}…`;
 
-      const device = await apiGetJson(`/api/devices/${encodeURIComponent(mac)}`);
+      // ✅ IMPORTANT: query param instead of /:mac path
+      const device = await apiGetJson(`/api/devices?mac=${encodeURIComponent(mac)}`);
 
       if (el.detailsBody) {
         el.detailsBody.innerHTML =
@@ -154,7 +163,9 @@
       }
     } catch (err) {
       showDetails();
-      if (el.detailsBody) el.detailsBody.textContent = `ERROR loading ${mac}: ${String(err.message || err)}`;
+      if (el.detailsBody) el.detailsBody.innerHTML =
+        `<div style="color:#ff6b6b; font-weight:700;">ERROR:</div>
+         <pre class="codebox" style="white-space:pre-wrap">${esc(String(err.message || err))}</pre>`;
     }
   }
 
@@ -181,7 +192,7 @@
       setBadge("API: ERROR");
       if (el.devicesGrid) {
         el.devicesGrid.innerHTML =
-          `<div style="color:#b00020"><b>API ERROR</b><br>${esc(String(err.message || err))}</div>`;
+          `<div style="color:#ff6b6b"><b>API ERROR</b><br>${esc(String(err.message || err))}</div>`;
       }
       if (el.deviceCount) el.deviceCount.textContent = "—";
     }
